@@ -1,0 +1,11 @@
+[Unit]
+Description=Run accounting email ingest every 3 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+RandomizedDelaySec=30s
+Unit=accounting-ingest.service
+
+[Install]
+WantedBy=timers.target

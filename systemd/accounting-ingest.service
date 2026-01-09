@@ -1,0 +1,15 @@
+[Unit]
+Description=Accounting email ingest runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=accounting-ingest
+Group=accounting-ingest
+WorkingDirectory=/opt/accounting-ingest
+EnvironmentFile=/etc/accounting-ingest/accounting-ingest.env
+ExecStart=/usr/bin/python3 -m src.ingest --run-once
+
+[Install]
+WantedBy=multi-user.target

@@ -46,7 +46,8 @@ def load_env_file(path):
 
 @dataclass
 class Config:
-	webhook_url: str
+	po_webhook_url: str
+	accounting_webhook_url: str
 	accounting_automation_secret: str
 	imap_host: str
 	imap_port: int
@@ -55,10 +56,17 @@ class Config:
 	imap_username: str
 	imap_password: str
 	imap_mailbox: str
+	accounting_imap_username: str
+	accounting_imap_password: str
+	accounting_imap_mailbox: str
+	po_imap_username: str
+	po_imap_password: str
+	po_imap_mailbox: str
 	processed_mailbox: str
 	failed_mailbox: str
 	quarantine_mailbox: str | None
-	allowed_mime_types: list
+	accounting_allowed_mime_types: list
+	po_allowed_mime_types: list
 	max_attachment_bytes: int
 	max_body_chars: int
 	poll_limit: int
@@ -79,23 +87,67 @@ def load_config(env_path=DEFAULT_ENV_PATH, overrides=None):
 	def env(key, fallback=None):
 		return overrides.get(key, os.environ.get(key, fallback))
 
+	legacy_webhook_url = env("WEBHOOK_URL", "").strip()
+	po_webhook_url = env("PO_WEBHOOK_URL", "").strip()
+	accounting_webhook_url = env("ACCOUNTING_WEBHOOK_URL", "").strip()
+	if not po_webhook_url:
+		if legacy_webhook_url and "/api/v1/customers/wholesale/orders/po-drafts" in legacy_webhook_url:
+			po_webhook_url = legacy_webhook_url
+	if not accounting_webhook_url and legacy_webhook_url and "/api/v1/accounting/automation/ingest" in legacy_webhook_url:
+		accounting_webhook_url = legacy_webhook_url
+
+	legacy_imap_username = env("IMAP_USERNAME", "").strip()
+	legacy_imap_password = env("IMAP_PASSWORD", "").strip()
+	legacy_imap_mailbox = env("IMAP_MAILBOX", "INBOX").strip()
+
+	accounting_imap_username = env("ACCOUNTING_IMAP_USERNAME", legacy_imap_username).strip()
+	accounting_imap_password = env("ACCOUNTING_IMAP_PASSWORD", legacy_imap_password).strip()
+	accounting_imap_mailbox = env("ACCOUNTING_IMAP_MAILBOX", legacy_imap_mailbox).strip()
+	po_imap_username = env("PO_IMAP_USERNAME", "").strip()
+	po_imap_password = env("PO_IMAP_PASSWORD", "").strip()
+	po_imap_mailbox = env("PO_IMAP_MAILBOX", "INBOX").strip()
+
+	# Compatibility for existing single-mailbox PO setups using IMAP_* only.
+	if po_webhook_url and not accounting_webhook_url and not po_imap_username and legacy_imap_username:
+		po_imap_username = legacy_imap_username
+	if po_webhook_url and not accounting_webhook_url and not po_imap_password and legacy_imap_password:
+		po_imap_password = legacy_imap_password
+	if po_webhook_url and not accounting_webhook_url and po_imap_mailbox == "INBOX" and legacy_imap_mailbox:
+		po_imap_mailbox = legacy_imap_mailbox
+
 	return Config(
-		webhook_url=env("WEBHOOK_URL", "").strip(),
+		po_webhook_url=po_webhook_url,
+		accounting_webhook_url=accounting_webhook_url,
 		accounting_automation_secret=env("ACCOUNTING_AUTOMATION_SECRET", "").strip(),
 		imap_host=env("IMAP_HOST", "127.0.0.1").strip(),
 		imap_port=_parse_int(env("IMAP_PORT", "993"), 993),
 		imap_tls=_parse_bool(env("IMAP_TLS", "true"), True),
 		imap_tls_verify=_parse_bool(env("IMAP_TLS_VERIFY", "false"), False),
-		imap_username=env("IMAP_USERNAME", "").strip(),
-		imap_password=env("IMAP_PASSWORD", "").strip(),
-		imap_mailbox=env("IMAP_MAILBOX", "INBOX").strip(),
+		imap_username=legacy_imap_username,
+		imap_password=legacy_imap_password,
+		imap_mailbox=legacy_imap_mailbox,
+		accounting_imap_username=accounting_imap_username,
+		accounting_imap_password=accounting_imap_password,
+		accounting_imap_mailbox=accounting_imap_mailbox,
+		po_imap_username=po_imap_username,
+		po_imap_password=po_imap_password,
+		po_imap_mailbox=po_imap_mailbox,
 		processed_mailbox=env("PROCESSED_MAILBOX", "INBOX.Archive.Processed").strip(),
 		failed_mailbox=env("FAILED_MAILBOX", "INBOX.Archive.Failed").strip(),
 		quarantine_mailbox=env("QUARANTINE_MAILBOX", "INBOX.Archive.Quarantine")
 		.strip()
 		or None,
-		allowed_mime_types=_parse_list(
-			env("ALLOWED_MIME_TYPES", "application/pdf,image/jpeg,image/png,image/heic")
+		accounting_allowed_mime_types=_parse_list(
+			env(
+				"ACCOUNTING_ALLOWED_MIME_TYPES",
+				env("ALLOWED_MIME_TYPES", "application/pdf,image/jpeg,image/png,image/heic,text/csv,application/csv")
+			)
+		),
+		po_allowed_mime_types=_parse_list(
+			env(
+				"PO_ALLOWED_MIME_TYPES",
+				"application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv"
+			)
 		),
 		max_attachment_bytes=_parse_int(env("MAX_ATTACHMENT_BYTES", "26214400"), 26214400),
 		max_body_chars=_parse_int(env("MAX_BODY_CHARS", "20000"), 20000),

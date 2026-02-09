@@ -11,6 +11,33 @@ class WebhookError(Exception):
 	pass
 
 
+def _build_default_headers(secret):
+	return {
+		"X-Accounting-Automation-Secret": secret,
+		"User-Agent": "Accounting-Ingest/1.0"
+	}
+
+
+def _add_origin_headers(url, headers):
+	parsed = urlparse(url)
+	if parsed.scheme and parsed.netloc:
+		origin = f"{parsed.scheme}://{parsed.netloc}"
+		headers["Origin"] = origin
+		headers["Referer"] = origin
+
+
+def _post_request(url, headers, body, timeout=30):
+	req = request.Request(url, data=body, headers=headers, method="POST")
+	try:
+		with request.urlopen(req, timeout=timeout) as resp:
+			response_body = resp.read().decode("utf-8")
+			return resp.status, response_body
+	except request.HTTPError as err:
+		raise WebhookError(f"HTTP {err.code}: {err.read().decode('utf-8')}")
+	except Exception as exc:
+		raise WebhookError(str(exc))
+
+
 def _encode_multipart(fields, files):
 	boundary = f"----acct-ingest-{uuid.uuid4().hex}"
 	lines = []
@@ -30,8 +57,9 @@ def _encode_multipart(fields, files):
 		add_line(f"--{boundary}")
 		filename = item.get("filename") or "attachment"
 		content_type = item.get("content_type") or "application/octet-stream"
+		field_name = item.get("field_name") or "file"
 		add_line(
-			f'Content-Disposition: form-data; name="files"; filename="{filename}"'
+			f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"'
 		)
 		add_line(f"Content-Type: {content_type}")
 		add_line("")
@@ -42,18 +70,43 @@ def _encode_multipart(fields, files):
 	return body, boundary
 
 
-def post_webhook(config, payload, attachments, timeout=30):
-	headers = {
-		"X-Accounting-Automation-Secret": config.accounting_automation_secret,
-		"User-Agent": "Accounting-Ingest/1.0"
-	}
+def post_po_webhook(config, payload, attachment, timeout=30):
+	if not config.po_webhook_url:
+		raise WebhookError("Missing po_webhook_url")
+	headers = _build_default_headers(config.accounting_automation_secret)
+	_add_origin_headers(config.po_webhook_url, headers)
+	if attachment:
+		fields = {
+			"from_address": payload.get("from_address"),
+			"to_address": payload.get("to_address"),
+			"subject": payload.get("subject"),
+			"body_text": payload.get("body_text"),
+			"body_html": payload.get("body_html"),
+			"source_ref": payload.get("source_ref"),
+			"source_type": payload.get("source_type"),
+			"metadata": json.dumps(payload.get("metadata") or {})
+		}
+		files = [
+			{
+				"field_name": "file",
+				"filename": attachment.get("filename"),
+				"content_type": attachment.get("content_type"),
+				"data": attachment.get("payload")
+			}
+		]
+		body, boundary = _encode_multipart(fields, files)
+		headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+	else:
+		body = json.dumps(payload).encode("utf-8")
+		headers["Content-Type"] = "application/json"
+	return _post_request(config.po_webhook_url, headers, body, timeout=timeout)
 
-	parsed = urlparse(config.webhook_url)
-	if parsed.scheme and parsed.netloc:
-		origin = f"{parsed.scheme}://{parsed.netloc}"
-		headers["Origin"] = origin
-		headers["Referer"] = origin
 
+def post_accounting_webhook(config, payload, attachments, timeout=30):
+	if not config.accounting_webhook_url:
+		raise WebhookError("Missing accounting_webhook_url")
+	headers = _build_default_headers(config.accounting_automation_secret)
+	_add_origin_headers(config.accounting_webhook_url, headers)
 	if attachments:
 		fields = {
 			"external_event_id": payload.get("external_event_id"),
@@ -64,27 +117,23 @@ def post_webhook(config, payload, attachments, timeout=30):
 			"body_html": payload.get("body_html"),
 			"metadata": json.dumps(payload.get("metadata") or {})
 		}
-		files = []
-		for attachment in attachments:
-			files.append(
-				{
-					"filename": attachment.get("filename"),
-					"content_type": attachment.get("content_type"),
-					"data": attachment.get("payload")
-				}
-			)
+		files = [
+			{
+				"field_name": "files",
+				"filename": attachment.get("filename"),
+				"content_type": attachment.get("content_type"),
+				"data": attachment.get("payload")
+			}
+			for attachment in attachments
+		]
 		body, boundary = _encode_multipart(fields, files)
 		headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 	else:
 		body = json.dumps(payload).encode("utf-8")
 		headers["Content-Type"] = "application/json"
+	return _post_request(config.accounting_webhook_url, headers, body, timeout=timeout)
 
-	req = request.Request(config.webhook_url, data=body, headers=headers, method="POST")
-	try:
-		with request.urlopen(req, timeout=timeout) as resp:
-			response_body = resp.read().decode("utf-8")
-			return resp.status, response_body
-	except request.HTTPError as err:
-		raise WebhookError(f"HTTP {err.code}: {err.read().decode('utf-8')}")
-	except Exception as exc:
-		raise WebhookError(str(exc))
+
+def post_webhook(config, payload, attachment, timeout=30):
+	# Backward-compatible helper used by existing callers/tests.
+	return post_po_webhook(config, payload, attachment, timeout=timeout)

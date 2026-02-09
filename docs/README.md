@@ -1,184 +1,129 @@
-# Accounting Email Ingest Service
+# Email Ingest Service
 
-This service polls a mailbox over IMAP, extracts receipt attachments and message metadata, and forwards them to the accounting automation webhook. It runs as a systemd timer and moves processed messages to Archive folders for visibility and retry.
+This service polls IMAP mailboxes and routes emails by mailbox to the correct webhook:
 
-## What this does
-- Connects to Dovecot IMAP on localhost (or configured host).
-- Reads messages from the configured mailbox (default `INBOX`).
-- Extracts PDF/image attachments and basic email metadata.
-- POSTs a multipart or JSON payload to the accounting automation webhook.
-- Moves successful messages to `Archive/Processed` and failures to `Archive/Failed`.
-- Optionally retries failed messages each run.
+- Accounting mailbox route -> accounting automation webhook
+- PO mailbox route -> wholesale PO draft webhook
 
-## Prerequisites
-- IMAP credentials for the accounting mailbox (username/password).
-- Webhook URL and shared secret from the app:
-  - `https://<our-domain>/api/v1/accounting/automation/ingest`
-  - `ACCOUNTING_AUTOMATION_SECRET`
+It preserves Processed/Failed archive behavior and dry-run behavior.
+
+## Strict routing
+- `accounting@butteredupbakery.com` mailbox messages are sent only to accounting webhook.
+- `po@butteredupbakery.com` mailbox messages are sent only to PO webhook.
+- No cross-posting between integrations.
+
+## Endpoints
+- Accounting: `POST https://<our-domain>/api/v1/accounting/automation/ingest`
+- PO drafts: `POST https://<our-domain>/api/v1/customers/wholesale/orders/po-drafts`
+- Auth header on both:
+  - `X-Accounting-Automation-Secret: <ACCOUNTING_AUTOMATION_SECRET>`
 
 ## Configuration
-The service reads a simple env file:
+Env file:
 
 `/etc/accounting-ingest/accounting-ingest.env`
 
-Example (template is created on install):
+Example:
 ```
-WEBHOOK_URL=https://<our-domain>/api/v1/accounting/automation/ingest
+ACCOUNTING_WEBHOOK_URL=https://<our-domain>/api/v1/accounting/automation/ingest
+PO_WEBHOOK_URL=https://<our-domain>/api/v1/customers/wholesale/orders/po-drafts
 ACCOUNTING_AUTOMATION_SECRET=
+
 IMAP_HOST=127.0.0.1
 IMAP_PORT=993
 IMAP_TLS=true
-IMAP_USERNAME=accounting@butteredupbakery.com
-IMAP_PASSWORD=
-IMAP_MAILBOX=INBOX
+IMAP_TLS_VERIFY=false
+
+ACCOUNTING_IMAP_USERNAME=accounting@butteredupbakery.com
+ACCOUNTING_IMAP_PASSWORD=
+ACCOUNTING_IMAP_MAILBOX=INBOX
+
+PO_IMAP_USERNAME=po@butteredupbakery.com
+PO_IMAP_PASSWORD=
+PO_IMAP_MAILBOX=INBOX
+
 PROCESSED_MAILBOX=INBOX.Archive.Processed
 FAILED_MAILBOX=INBOX.Archive.Failed
 QUARANTINE_MAILBOX=INBOX.Archive.Quarantine
-ALLOWED_MIME_TYPES=application/pdf,image/jpeg,image/png,image/heic
+
+ACCOUNTING_ALLOWED_MIME_TYPES=application/pdf,image/jpeg,image/png,image/heic,text/csv,application/csv
+PO_ALLOWED_MIME_TYPES=application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv
+
 MAX_ATTACHMENT_BYTES=26214400
 MAX_BODY_CHARS=20000
 POLL_LIMIT=25
 RETRY_FAILED=true
 DRY_RUN=false
 PROCESS_ALL=false
-IMAP_TLS_VERIFY=false
+
+# Legacy fallback (optional)
+IMAP_USERNAME=
+IMAP_PASSWORD=
+IMAP_MAILBOX=INBOX
 ```
 
-Notes:
-- `PROCESS_ALL=true` will process all messages in the mailbox instead of `UNSEEN`.
-- `DRY_RUN=true` logs actions without webhook calls or IMAP moves.
+Compatibility:
+- If `ACCOUNTING_IMAP_*` is unset, accounting route falls back to legacy `IMAP_*`.
+- Legacy `WEBHOOK_URL` is still recognized if it points to either known endpoint.
+
+## Payload behavior by route
+
+### Accounting route
+- Target: `ACCOUNTING_WEBHOOK_URL`
+- Uses accounting payload shape:
+  - `external_event_id`
+  - `from_address`, `to_address`, `subject`
+  - `body_text`, `body_html`
+  - `metadata`
+  - multipart `files` for allowed attachments
+  - JSON-only when no allowed attachment
+
+### PO route
+- Target: `PO_WEBHOOK_URL`
+- Uses PO draft payload shape:
+  - `source_ref`, `source_type=email`
+  - `from_address`, `to_address`, `subject`
+  - `body_text`, `body_html`
+  - `metadata`
+  - multipart single `file` when attachment exists
+  - JSON-only when no valid attachment
+
+PO attachment selection priority:
+- `application/pdf`
+- image (`image/jpeg`, `image/png`, `image/webp`, `image/heic`, `image/heif`)
+- doc/docx (`application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`)
+- text/csv (`text/plain`, `text/csv`, `application/csv`)
+
+Skipped items include reasons (`too_large`, `unsupported_type`, `single_file_only`) in metadata.
+
+## Message lifecycle
+- `2xx` -> move to `Archive/Processed`
+- non-`2xx`/error -> move to `Archive/Failed`
+- `DRY_RUN=true` -> no webhook calls and no IMAP moves
 
 ## Install
-From this repo:
-
 ```
 ./install/install.sh --apply
-```
-
-This will:
-- Create `accounting-ingest` system user.
-- Create `/opt/accounting-ingest` and copy files.
-- Create `/etc/accounting-ingest/accounting-ingest.env` (if missing).
-- Install systemd service/timer units.
-
-Enable the timer:
-```
 sudo systemctl enable --now accounting-ingest.timer
 ```
 
-## Run once (manual)
+## Run once
 ```
 /usr/bin/python3 -m src.ingest --run-once
 ```
 
-Process only failed mailbox:
-```
-/usr/bin/python3 -m src.ingest --retry-failed --mailbox Archive/Failed
-```
+## Manual validation checklist
+1. Configure `ACCOUNTING_IMAP_*` + `ACCOUNTING_WEBHOOK_URL`.
+2. Configure `PO_IMAP_*` + `PO_WEBHOOK_URL`.
+3. Send a test email to accounting inbox; verify only accounting webhook receives it.
+4. Send a test email to PO inbox; verify only PO webhook receives it.
+5. For PO, send multiple attachments and confirm only one `file` is posted by priority.
+6. Confirm `X-Accounting-Automation-Secret` header on both integrations.
+7. Confirm Processed/Failed mailbox moves for success and failure.
+8. Confirm dry-run prevents calls and moves.
 
-Dry run (no webhook, no moves):
-```
-/usr/bin/python3 -m src.ingest --run-once --dry-run
-```
-
-## Troubleshooting
-- View logs:
-  - `journalctl -u accounting-ingest.service -f`
-- IMAP auth errors:
-  - Confirm `IMAP_USERNAME` and `IMAP_PASSWORD` are correct.
-  - Confirm IMAP is enabled and listening on the configured port.
-- Webhook 401/403:
-  - Verify `ACCOUNTING_AUTOMATION_SECRET` is correct.
-- Messages not moving:
-  - Confirm mailbox paths (`Archive/Processed`, `Archive/Failed`) exist or can be created.
-  - Check if the IMAP user has permission to create folders.
-
-## Integration Contract (Webhook Payload)
-This service calls the app webhook with the following contract.
-
-### Endpoint
-`POST https://<our-domain>/api/v1/accounting/automation/ingest`
-
-### Headers
-- `X-Accounting-Automation-Secret: <ACCOUNTING_AUTOMATION_SECRET>`
-- `Origin: https://<our-domain>`
-- `Referer: https://<our-domain>`
-- `Content-Type: multipart/form-data` when attachments exist
-- `Content-Type: application/json` when no attachments exist
-
-### Payload (multipart/form-data)
-Fields:
-- `external_event_id`: Message-ID header (or `sha256:<hash>` fallback if missing)
-- `from_address`
-- `to_address`
-- `subject`
-- `body_text`
-- `body_html`
-- `metadata`: JSON string
-- `files`: 1..n attachments (field name is `files`)
-
-### Payload (application/json, no attachments)
-Same fields as above, except no `files`.
-
-### Metadata object (JSON)
-- `source`: "email"
-- `received_date`: parsed Date header if present
-- `message_id`: Message-ID header
-- `return_path`
-- `reply_to`
-- `cc`
-- `headers_subset`: subset of headers (message_id, subject, from, to, date)
-- `attachments_count`: number of attachments sent
-- `attachments_skipped`: list of skipped attachments (filename, content_type, size, reason)
-- `attachments_skipped_count`
-
-### Attachment rules
-- Allowed MIME types: `application/pdf`, `image/jpeg`, `image/png`, `image/heic`
-- Enforces `MAX_ATTACHMENT_BYTES` (default 25MB)
-- Inline parts are ignored unless they have a filename or `Content-Disposition: attachment`
-- If no allowed attachments remain, the service sends JSON-only with metadata and body
-
-### Idempotency
-- `external_event_id` is the email Message-ID when available
-- If Message-ID is missing, the service uses `sha256:<hash>` of the raw message
-- The app dedupes by `external_event_id` and attachment hashes
-
-### Example (multipart)
-```
-curl -X POST "https://<our-domain>/api/v1/accounting/automation/ingest" \
-  -H "X-Accounting-Automation-Secret: $ACCOUNTING_AUTOMATION_SECRET" \
-  -F "external_event_id=<message-id>" \
-  -F "from_address=sender@example.com" \
-  -F "to_address=accounting@butteredupbakery.com" \
-  -F "subject=Receipt" \
-  -F "body_text=Thanks for your purchase" \
-  -F "metadata={\"source\":\"email\"}" \
-  -F "files=@/path/to/receipt.pdf;type=application/pdf"
-```
-
-### Example (JSON-only)
-```
-curl -X POST "https://<our-domain>/api/v1/accounting/automation/ingest" \
-  -H "X-Accounting-Automation-Secret: $ACCOUNTING_AUTOMATION_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "external_event_id": "<message-id>",
-    "from_address": "sender@example.com",
-    "to_address": "accounting@butteredupbakery.com",
-    "subject": "No attachment",
-    "body_text": "See note in body",
-    "metadata": {"source": "email"}
-  }'
-```
-
-### Webhook behavior
-- On 2xx response: message moves to `Archive/Processed`
-- On error: message moves to `Archive/Failed`
-- If `DRY_RUN=true`, no webhook calls are made
-
-## Uninstall
-```
-./install/uninstall.sh --apply
-```
-
-This disables the timer and removes `/opt/accounting-ingest`. It leaves the env file in `/etc/accounting-ingest` for safety.
+## Ops migration note
+- Existing accounting automation can remain unchanged:
+  - keep accounting webhook URL and IMAP credentials.
+  - if you already use `IMAP_*`, it still works for accounting route.
+- To add PO ingest, configure `PO_WEBHOOK_URL` and `PO_IMAP_*`.

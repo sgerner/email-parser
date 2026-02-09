@@ -48,19 +48,28 @@ fi
 if [[ ! -f "$ENV_FILE" ]]; then
 	run_cmd "cat <<'EOF' > ${ENV_FILE}
 # Accounting ingest service configuration
-WEBHOOK_URL=https://<our-domain>/api/v1/accounting/automation/ingest
+PO_WEBHOOK_URL=https://<our-domain>/api/v1/customers/wholesale/orders/po-drafts
+ACCOUNTING_WEBHOOK_URL=https://<our-domain>/api/v1/accounting/automation/ingest
 ACCOUNTING_AUTOMATION_SECRET=
 IMAP_HOST=127.0.0.1
 IMAP_PORT=993
 IMAP_TLS=true
 IMAP_TLS_VERIFY=false
-IMAP_USERNAME=accounting@butteredupbakery.com
+ACCOUNTING_IMAP_USERNAME=accounting@butteredupbakery.com
+ACCOUNTING_IMAP_PASSWORD=
+ACCOUNTING_IMAP_MAILBOX=INBOX
+PO_IMAP_USERNAME=po@butteredupbakery.com
+PO_IMAP_PASSWORD=
+PO_IMAP_MAILBOX=INBOX
+# Legacy fallback variables (used for accounting route when ACCOUNTING_IMAP_* are unset)
+IMAP_USERNAME=
 IMAP_PASSWORD=
 IMAP_MAILBOX=INBOX
 PROCESSED_MAILBOX=INBOX.Archive.Processed
 FAILED_MAILBOX=INBOX.Archive.Failed
 QUARANTINE_MAILBOX=INBOX.Archive.Quarantine
-ALLOWED_MIME_TYPES=application/pdf,image/jpeg,image/png,image/heic
+ACCOUNTING_ALLOWED_MIME_TYPES=application/pdf,image/jpeg,image/png,image/heic,text/csv,application/csv
+PO_ALLOWED_MIME_TYPES=application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/csv
 MAX_ATTACHMENT_BYTES=26214400
 MAX_BODY_CHARS=20000
 POLL_LIMIT=25

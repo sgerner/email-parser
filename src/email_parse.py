@@ -11,7 +11,13 @@ EXTENSION_MIME_MAP = {
 	".jpg": "image/jpeg",
 	".jpeg": "image/jpeg",
 	".png": "image/png",
-	".heic": "image/heic"
+	".webp": "image/webp",
+	".heic": "image/heic",
+	".heif": "image/heif",
+	".doc": "application/msword",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".txt": "text/plain",
+	".csv": "text/csv"
 }
 
 

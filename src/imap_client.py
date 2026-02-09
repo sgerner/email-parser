@@ -6,7 +6,7 @@ import ssl
 logger = logging.getLogger(__name__)
 
 
-def connect(config):
+def connect(config, username=None, password=None):
 	if config.imap_tls:
 		context = ssl.create_default_context()
 		if not config.imap_tls_verify:
@@ -15,7 +15,7 @@ def connect(config):
 		client = imaplib.IMAP4_SSL(config.imap_host, config.imap_port, ssl_context=context)
 	else:
 		client = imaplib.IMAP4(config.imap_host, config.imap_port)
-	client.login(config.imap_username, config.imap_password)
+	client.login(username or config.imap_username, password or config.imap_password)
 	return client
 
 

@@ -1,8 +1,11 @@
 import unittest
+import imaplib
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import src.ingest as ingest
 from src.ingest import (
+    MailRoute,
     build_routes,
     select_attachment_for_webhook,
     send_accounting_message,
@@ -153,6 +156,62 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(routes[0].imap_username, "accounting@butteredupbakery.com")
         self.assertEqual(routes[1].target, "po")
         self.assertEqual(routes[1].imap_username, "po@butteredupbakery.com")
+
+    def test_main_continues_other_routes_after_auth_failure_and_exits_nonzero(self):
+        parser = Mock()
+        parser.parse_args.return_value = SimpleNamespace(
+            run_once=True,
+            mailbox=None,
+            limit=None,
+            retry_failed=False,
+            dry_run=False,
+            keep_in_inbox=False,
+            process_all=False,
+            config=None,
+        )
+        config = SimpleNamespace(
+            accounting_automation_secret="secret",
+            accounting_webhook_url="https://example.com/api/v1/accounting/automation/ingest",
+            po_webhook_url="https://example.com/api/v1/customers/wholesale/orders/po-drafts",
+            poll_limit=25,
+            retry_failed=False,
+            dry_run=False,
+            process_all=False,
+            processed_mailbox="INBOX.Archive.Processed",
+            failed_mailbox="INBOX.Archive.Failed",
+            quarantine_mailbox=None,
+        )
+        routes = [
+            MailRoute(
+                name="accounting",
+                target="accounting",
+                imap_username="accounting@butteredupbakery.com",
+                imap_password="bad-pass",
+                imap_mailbox="INBOX",
+                allowed_mime_types=["application/pdf"],
+            ),
+            MailRoute(
+                name="po",
+                target="po",
+                imap_username="po@butteredupbakery.com",
+                imap_password="good-pass",
+                imap_mailbox="INBOX",
+                allowed_mime_types=["application/pdf"],
+            ),
+        ]
+        po_client = Mock()
+        with patch("src.ingest.setup_logging"), patch("src.ingest.build_parser", return_value=parser), patch(
+            "src.ingest.load_config", return_value=config
+        ), patch("src.ingest.build_routes", return_value=routes), patch(
+            "src.ingest.connect",
+            side_effect=[imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Authentication failed."), po_client],
+        ) as connect_mock, patch("src.ingest.ensure_mailbox"), patch("src.ingest.process_mailbox") as process_mock:
+            with self.assertRaises(SystemExit) as err:
+                ingest.main()
+        self.assertEqual(err.exception.code, 1)
+        self.assertEqual(connect_mock.call_count, 2)
+        process_mock.assert_called_once()
+        po_client.logout.assert_called_once()
 
 
 if __name__ == "__main__":

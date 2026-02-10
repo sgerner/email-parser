@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import imaplib
 import logging
 import sys
 from dataclasses import dataclass
@@ -331,6 +332,7 @@ def main():
 	dry_run = args.dry_run or config.dry_run
 	process_all = args.process_all or config.process_all
 
+	route_failures = 0
 	for route in routes:
 		logger.info(
 			"route_start target=%s username=%s mailbox=%s",
@@ -338,7 +340,26 @@ def main():
 			route.imap_username,
 			route.imap_mailbox,
 		)
-		client = connect(config, username=route.imap_username, password=route.imap_password)
+		try:
+			client = connect(config, username=route.imap_username, password=route.imap_password)
+		except imaplib.IMAP4.error as err:
+			route_failures += 1
+			logger.error(
+				"route_authentication_failed target=%s username=%s error=%s",
+				route.target,
+				route.imap_username,
+				err,
+			)
+			continue
+		except Exception as err:
+			route_failures += 1
+			logger.exception(
+				"route_connect_failed target=%s username=%s error=%s",
+				route.target,
+				route.imap_username,
+				err,
+			)
+			continue
 		try:
 			ensure_mailbox(client, config.processed_mailbox)
 			ensure_mailbox(client, config.failed_mailbox)
@@ -369,11 +390,22 @@ def main():
 					keep_in_inbox=args.keep_in_inbox,
 					process_all=True,
 				)
+		except Exception as err:
+			route_failures += 1
+			logger.exception(
+				"route_processing_failed target=%s mailbox=%s error=%s",
+				route.target,
+				route.imap_mailbox,
+				err,
+			)
 		finally:
 			try:
 				client.logout()
 			except Exception:
 				pass
+
+	if route_failures:
+		sys.exit(1)
 
 
 if __name__ == "__main__":

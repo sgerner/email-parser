@@ -46,6 +46,7 @@ def load_env_file(path):
 
 @dataclass
 class Config:
+	company_id: str | None
 	po_webhook_url: str
 	accounting_webhook_url: str
 	accounting_automation_secret: str
@@ -116,6 +117,7 @@ def load_config(env_path=DEFAULT_ENV_PATH, overrides=None):
 		po_imap_mailbox = legacy_imap_mailbox
 
 	return Config(
+		company_id=env("COMPANY_ID", env("ACCOUNTING_COMPANY_ID")).strip() or None,
 		po_webhook_url=po_webhook_url,
 		accounting_webhook_url=accounting_webhook_url,
 		accounting_automation_secret=env("ACCOUNTING_AUTOMATION_SECRET", "").strip(),

@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.webhook_client import post_webhook, post_accounting_webhook
+from src.webhook_client import post_webhook, post_accounting_webhook, post_po_webhook
 
 
 class _FakeResponse:
@@ -27,6 +27,7 @@ class WebhookClientTests(unittest.TestCase):
             po_webhook_url="https://example.com/api/v1/customers/wholesale/orders/po-drafts",
             accounting_webhook_url="https://example.com/api/v1/accounting/automation/ingest",
             accounting_automation_secret="secret-token",
+            company_id=None
         )
 
     def test_post_webhook_multipart_sends_single_file_and_metadata(self):
@@ -141,6 +142,102 @@ class WebhookClientTests(unittest.TestCase):
         self.assertIn(b'name="files"; filename="receipt.csv"', captured["body"])
         self.assertIn(b'name="external_event_id"', captured["body"])
         self.assertIn(b'<msg@example.com>', captured["body"])
+
+
+class WebhookCompanyIdTests(unittest.TestCase):
+    def setUp(self):
+        self.config = SimpleNamespace(
+            po_webhook_url="https://example.com/api/v1/customers/wholesale/orders/po-drafts",
+            accounting_webhook_url="https://example.com/api/v1/accounting/automation/ingest",
+            accounting_automation_secret="secret-token",
+            company_id="test-company-123"
+        )
+
+    def test_post_po_webhook_includes_header_and_metadata(self):
+        payload = {
+            "from_address": "sender@example.com",
+            "to_address": "po@butteredupbakery.com",
+            "metadata": {"other": "value"}
+        }
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["headers"] = {key.lower(): value for key, value in req.header_items()}
+            captured["body"] = req.data
+            return _FakeResponse(status=200)
+
+        with patch("src.webhook_client.request.urlopen", side_effect=fake_urlopen):
+            post_po_webhook(self.config, payload, None)
+
+        self.assertEqual(captured["headers"].get("x-company-id"), "test-company-123")
+        
+        body = json.loads(captured["body"])
+        self.assertEqual(body["metadata"]["company_id"], "test-company-123")
+        self.assertEqual(body["metadata"]["other"], "value")
+
+    def test_post_po_webhook_multipart_includes_header_and_metadata(self):
+        payload = {
+            "metadata": {"other": "value"}
+        }
+        attachment = {
+            "filename": "test.txt",
+            "content_type": "text/plain",
+            "payload": b"data"
+        }
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["headers"] = {key.lower(): value for key, value in req.header_items()}
+            captured["body"] = req.data
+            return _FakeResponse(status=200)
+
+        with patch("src.webhook_client.request.urlopen", side_effect=fake_urlopen):
+            post_po_webhook(self.config, payload, attachment)
+
+        self.assertEqual(captured["headers"].get("x-company-id"), "test-company-123")
+        self.assertIn(b'name="metadata"', captured["body"])
+        self.assertIn(b'"company_id": "test-company-123"', captured["body"])
+
+    def test_post_accounting_webhook_includes_header_and_payload(self):
+        payload = {
+            "external_event_id": "123"
+        }
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["headers"] = {key.lower(): value for key, value in req.header_items()}
+            captured["body"] = req.data
+            return _FakeResponse(status=200)
+
+        with patch("src.webhook_client.request.urlopen", side_effect=fake_urlopen):
+            post_accounting_webhook(self.config, payload, None)
+            
+        self.assertEqual(captured["headers"].get("x-company-id"), "test-company-123")
+        body = json.loads(captured["body"])
+        self.assertEqual(body["company_id"], "test-company-123")
+
+    def test_post_accounting_webhook_multipart_includes_header_and_field(self):
+        payload = {
+            "external_event_id": "123"
+        }
+        attachments = [{
+            "filename": "test.txt",
+            "content_type": "text/plain",
+            "payload": b"data"
+        }]
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["headers"] = {key.lower(): value for key, value in req.header_items()}
+            captured["body"] = req.data
+            return _FakeResponse(status=200)
+
+        with patch("src.webhook_client.request.urlopen", side_effect=fake_urlopen):
+            post_accounting_webhook(self.config, payload, attachments)
+            
+        self.assertEqual(captured["headers"].get("x-company-id"), "test-company-123")
+        self.assertIn(b'name="company_id"', captured["body"])
+        self.assertIn(b'test-company-123', captured["body"])
 
 
 if __name__ == "__main__":

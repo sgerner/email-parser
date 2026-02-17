@@ -74,8 +74,13 @@ def post_po_webhook(config, payload, attachment, timeout=30):
 	if not config.po_webhook_url:
 		raise WebhookError("Missing po_webhook_url")
 	headers = _build_default_headers(config.accounting_automation_secret)
+	if config.company_id:
+		headers["X-Company-Id"] = config.company_id
 	_add_origin_headers(config.po_webhook_url, headers)
 	if attachment:
+		metadata = payload.get("metadata") or {}
+		if config.company_id:
+			metadata["company_id"] = config.company_id
 		fields = {
 			"from_address": payload.get("from_address"),
 			"to_address": payload.get("to_address"),
@@ -84,7 +89,7 @@ def post_po_webhook(config, payload, attachment, timeout=30):
 			"body_html": payload.get("body_html"),
 			"source_ref": payload.get("source_ref"),
 			"source_type": payload.get("source_type"),
-			"metadata": json.dumps(payload.get("metadata") or {})
+			"metadata": json.dumps(metadata)
 		}
 		files = [
 			{
@@ -97,6 +102,8 @@ def post_po_webhook(config, payload, attachment, timeout=30):
 		body, boundary = _encode_multipart(fields, files)
 		headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 	else:
+		if config.company_id:
+			payload.setdefault("metadata", {})["company_id"] = config.company_id
 		body = json.dumps(payload).encode("utf-8")
 		headers["Content-Type"] = "application/json"
 	return _post_request(config.po_webhook_url, headers, body, timeout=timeout)
@@ -106,9 +113,12 @@ def post_accounting_webhook(config, payload, attachments, timeout=30):
 	if not config.accounting_webhook_url:
 		raise WebhookError("Missing accounting_webhook_url")
 	headers = _build_default_headers(config.accounting_automation_secret)
+	if config.company_id:
+		headers["X-Company-Id"] = config.company_id
 	_add_origin_headers(config.accounting_webhook_url, headers)
 	if attachments:
 		fields = {
+			"company_id": config.company_id,
 			"external_event_id": payload.get("external_event_id"),
 			"from_address": payload.get("from_address"),
 			"to_address": payload.get("to_address"),
@@ -129,6 +139,8 @@ def post_accounting_webhook(config, payload, attachments, timeout=30):
 		body, boundary = _encode_multipart(fields, files)
 		headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 	else:
+		if config.company_id:
+			payload["company_id"] = config.company_id
 		body = json.dumps(payload).encode("utf-8")
 		headers["Content-Type"] = "application/json"
 	return _post_request(config.accounting_webhook_url, headers, body, timeout=timeout)

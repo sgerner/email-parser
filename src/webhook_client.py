@@ -70,7 +70,7 @@ def _encode_multipart(fields, files):
 	return body, boundary
 
 
-def post_po_webhook(config, payload, attachment, timeout=30):
+def post_po_webhook(config, payload, attachment, timeout=120):
 	if not config.po_webhook_url:
 		raise WebhookError("Missing po_webhook_url")
 	headers = _build_default_headers(config.accounting_automation_secret)

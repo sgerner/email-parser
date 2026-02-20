@@ -70,13 +70,17 @@ def _encode_multipart(fields, files):
 	return body, boundary
 
 
-def post_po_webhook(config, payload, attachment, timeout=120):
+def post_po_webhook(config, payload, attachment, timeout=180):
 	if not config.po_webhook_url:
 		raise WebhookError("Missing po_webhook_url")
+
+	url = config.po_webhook_url
+	url += "&async=true" if "?" in url else "?async=true"
+
 	headers = _build_default_headers(config.accounting_automation_secret)
 	if config.company_id:
 		headers["X-Company-Id"] = config.company_id
-	_add_origin_headers(config.po_webhook_url, headers)
+	_add_origin_headers(url, headers)
 	if attachment:
 		metadata = payload.get("metadata") or {}
 		if config.company_id:
@@ -106,7 +110,7 @@ def post_po_webhook(config, payload, attachment, timeout=120):
 			payload.setdefault("metadata", {})["company_id"] = config.company_id
 		body = json.dumps(payload).encode("utf-8")
 		headers["Content-Type"] = "application/json"
-	return _post_request(config.po_webhook_url, headers, body, timeout=timeout)
+	return _post_request(url, headers, body, timeout=timeout)
 
 
 def post_accounting_webhook(config, payload, attachments, timeout=30):

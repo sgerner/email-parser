@@ -20,6 +20,14 @@ EXTENSION_MIME_MAP = {
 	".csv": "text/csv"
 }
 
+RECIPIENT_HEADERS = (
+	"X-Original-To",
+	"Delivered-To",
+	"Envelope-To",
+	"X-Envelope-To",
+	"To",
+)
+
 
 class ParsedEmail:
 	def __init__(self, metadata, body_text, body_html, attachments):
@@ -53,6 +61,16 @@ def _truncate(value, max_chars):
 	return value[:max_chars]
 
 
+def _extract_header_addresses(message, header_name):
+	values = message.get_all(header_name, [])
+	addresses = []
+	for value in values:
+		for _, addr in getaddresses([value]):
+			if addr:
+				addresses.append(addr.strip().lower())
+	return addresses
+
+
 def parse_email(raw_bytes, max_body_chars):
 	message = BytesParser(policy=policy.default).parsebytes(raw_bytes)
 
@@ -63,6 +81,11 @@ def parse_email(raw_bytes, max_body_chars):
 	cc = _normalize_addresses(message.get("Cc"))
 	reply_to = _normalize_addresses(message.get("Reply-To"))
 	return_path = _normalize_addresses(message.get("Return-Path"))
+	recipient_header_candidates = {}
+	for header_name in RECIPIENT_HEADERS:
+		candidates = _extract_header_addresses(message, header_name)
+		if candidates:
+			recipient_header_candidates[header_name.lower()] = candidates
 	date_header = message.get("Date")
 	received_date = None
 	if date_header:
@@ -125,6 +148,7 @@ def parse_email(raw_bytes, max_body_chars):
 		"return_path": return_path,
 		"reply_to": reply_to,
 		"cc": cc,
+		"recipient_header_candidates": recipient_header_candidates,
 		"headers_subset": {
 			"message_id": message_id,
 			"subject": subject,

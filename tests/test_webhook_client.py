@@ -239,6 +239,24 @@ class WebhookCompanyIdTests(unittest.TestCase):
         self.assertIn(b'name="company_id"', captured["body"])
         self.assertIn(b'test-company-123', captured["body"])
 
+    def test_company_id_override_is_used_when_provided(self):
+        payload = {
+            "external_event_id": "123"
+        }
+        captured = {}
+
+        def fake_urlopen(req, timeout):
+            captured["headers"] = {key.lower(): value for key, value in req.header_items()}
+            captured["body"] = req.data
+            return _FakeResponse(status=200)
+
+        with patch("src.webhook_client.request.urlopen", side_effect=fake_urlopen):
+            post_accounting_webhook(self.config, payload, None, company_id="override-company-456")
+
+        self.assertEqual(captured["headers"].get("x-company-id"), "override-company-456")
+        body = json.loads(captured["body"])
+        self.assertEqual(body["company_id"], "override-company-456")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,11 @@ def load_env_file(path):
 @dataclass
 class Config:
 	company_id: str | None
+	use_supabase_routes: bool
+	supabase_url: str
+	supabase_service_role_key: str
+	supabase_timeout_seconds: int
+	recipient_header_priority: list
 	po_webhook_url: str
 	accounting_webhook_url: str
 	accounting_automation_secret: str
@@ -117,7 +122,17 @@ def load_config(env_path=DEFAULT_ENV_PATH, overrides=None):
 		po_imap_mailbox = legacy_imap_mailbox
 
 	return Config(
-		company_id=env("COMPANY_ID", env("ACCOUNTING_COMPANY_ID")).strip() or None,
+		company_id=(env("COMPANY_ID", env("ACCOUNTING_COMPANY_ID")) or "").strip() or None,
+		use_supabase_routes=_parse_bool(env("USE_SUPABASE_ROUTES", "false"), False),
+		supabase_url=env("SUPABASE_URL", "").strip(),
+		supabase_service_role_key=env("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
+		supabase_timeout_seconds=_parse_int(env("SUPABASE_TIMEOUT_SECONDS", "10"), 10),
+		recipient_header_priority=_parse_list(
+			env(
+				"RECIPIENT_HEADER_PRIORITY",
+				"x-original-to,delivered-to,envelope-to,x-envelope-to,to"
+			)
+		),
 		po_webhook_url=po_webhook_url,
 		accounting_webhook_url=accounting_webhook_url,
 		accounting_automation_secret=env("ACCOUNTING_AUTOMATION_SECRET", "").strip(),

@@ -213,6 +213,21 @@ class IngestTests(unittest.TestCase):
         process_mock.assert_called_once()
         po_client.logout.assert_called_once()
 
+    def test_build_routes_dynamic_mode_uses_single_mailbox(self):
+        config = SimpleNamespace(
+            use_supabase_routes=True,
+            imap_username="inbound@farin.app",
+            imap_password="inbound-pass",
+            imap_mailbox="INBOX",
+        )
+
+        routes = build_routes(config)
+
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0].target, "dynamic")
+        self.assertEqual(routes[0].imap_username, "inbound@farin.app")
+        self.assertEqual(routes[0].imap_mailbox, "INBOX")
+
 
 if __name__ == "__main__":
     unittest.main()

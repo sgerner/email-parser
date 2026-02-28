@@ -11,6 +11,10 @@ class WebhookError(Exception):
 	pass
 
 
+def _resolved_company_id(config, company_id=None):
+	return company_id or getattr(config, "company_id", None)
+
+
 def _build_default_headers(secret):
 	return {
 		"X-Accounting-Automation-Secret": secret,
@@ -70,7 +74,7 @@ def _encode_multipart(fields, files):
 	return body, boundary
 
 
-def post_po_webhook(config, payload, attachment, timeout=180):
+def post_po_webhook(config, payload, attachment, timeout=180, company_id=None):
 	if not config.po_webhook_url:
 		raise WebhookError("Missing po_webhook_url")
 
@@ -78,13 +82,14 @@ def post_po_webhook(config, payload, attachment, timeout=180):
 	url += "&async=true" if "?" in url else "?async=true"
 
 	headers = _build_default_headers(config.accounting_automation_secret)
-	if config.company_id:
-		headers["X-Company-Id"] = config.company_id
+	resolved_company_id = _resolved_company_id(config, company_id=company_id)
+	if resolved_company_id:
+		headers["X-Company-Id"] = resolved_company_id
 	_add_origin_headers(url, headers)
 	if attachment:
 		metadata = payload.get("metadata") or {}
-		if config.company_id:
-			metadata["company_id"] = config.company_id
+		if resolved_company_id:
+			metadata["company_id"] = resolved_company_id
 		fields = {
 			"from_address": payload.get("from_address"),
 			"to_address": payload.get("to_address"),
@@ -106,23 +111,24 @@ def post_po_webhook(config, payload, attachment, timeout=180):
 		body, boundary = _encode_multipart(fields, files)
 		headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 	else:
-		if config.company_id:
-			payload.setdefault("metadata", {})["company_id"] = config.company_id
+		if resolved_company_id:
+			payload.setdefault("metadata", {})["company_id"] = resolved_company_id
 		body = json.dumps(payload).encode("utf-8")
 		headers["Content-Type"] = "application/json"
 	return _post_request(url, headers, body, timeout=timeout)
 
 
-def post_accounting_webhook(config, payload, attachments, timeout=30):
+def post_accounting_webhook(config, payload, attachments, timeout=30, company_id=None):
 	if not config.accounting_webhook_url:
 		raise WebhookError("Missing accounting_webhook_url")
 	headers = _build_default_headers(config.accounting_automation_secret)
-	if config.company_id:
-		headers["X-Company-Id"] = config.company_id
+	resolved_company_id = _resolved_company_id(config, company_id=company_id)
+	if resolved_company_id:
+		headers["X-Company-Id"] = resolved_company_id
 	_add_origin_headers(config.accounting_webhook_url, headers)
 	if attachments:
 		fields = {
-			"company_id": config.company_id,
+			"company_id": resolved_company_id,
 			"external_event_id": payload.get("external_event_id"),
 			"from_address": payload.get("from_address"),
 			"to_address": payload.get("to_address"),
@@ -143,13 +149,13 @@ def post_accounting_webhook(config, payload, attachments, timeout=30):
 		body, boundary = _encode_multipart(fields, files)
 		headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
 	else:
-		if config.company_id:
-			payload["company_id"] = config.company_id
+		if resolved_company_id:
+			payload["company_id"] = resolved_company_id
 		body = json.dumps(payload).encode("utf-8")
 		headers["Content-Type"] = "application/json"
 	return _post_request(config.accounting_webhook_url, headers, body, timeout=timeout)
 
 
-def post_webhook(config, payload, attachment, timeout=30):
+def post_webhook(config, payload, attachment, timeout=30, company_id=None):
 	# Backward-compatible helper used by existing callers/tests.
-	return post_po_webhook(config, payload, attachment, timeout=timeout)
+	return post_po_webhook(config, payload, attachment, timeout=timeout, company_id=company_id)
